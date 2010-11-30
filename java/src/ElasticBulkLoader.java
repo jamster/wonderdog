@@ -9,6 +9,9 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.Random;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -47,6 +50,12 @@ import org.elasticsearch.client.transport.TransportClient;
 public class ElasticBulkLoader extends Configured implements Tool {
 
   public static class IndexMapper extends Mapper<LongWritable, Text, Text, Text> {
+    
+    enum SourceType {
+      tsv,
+      csv,
+      json
+    }
       
     private Node node;
     private Client client;
@@ -57,24 +66,48 @@ public class ElasticBulkLoader extends Configured implements Tool {
     private String[] fieldNames;
     private volatile BulkRequestBuilder currentRequest;
 
+    // New vars to handle JSON documents
+    private SourceType sourceType; 
+    private String jsonIdRegex;
+    Pattern pattern;
+    Matcher matcher;
+    
+    
     // Used for bookkeeping purposes
     private AtomicLong totalBulkTime  = new AtomicLong();
     private AtomicLong totalBulkItems = new AtomicLong();
     private Random     randgen        = new Random();
     private long       runStartTime   = System.currentTimeMillis();
 
+
+
     public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
-        String[] fields = value.toString().split("\t");
-        XContentBuilder builder = XContentFactory.jsonBuilder().startObject();
-        for(int i = 0; i < fields.length; i++) {
-            if (i < fieldNames.length) {
-                builder.field(fieldNames[i], fields[i]);
-            }
+        
+        String recordOutput;
+        String id;
+        if (sourceType == SourceType.json){
+          // String CID_PATTERN = ".*\"CID\":\"([^\"]+)\".*"; // {"CID":"z:LEG:00000019801"
+          id = matcher.replaceFirst( "$1" );
+          
+          recordOutput = value.toString();
+        } 
+        else {
+          String delim = (sourceType == SourceType.tsv) ? "\t" : ",";
+          String[] fields = value.toString().split(delim);
+          XContentBuilder builder = XContentFactory.jsonBuilder().startObject();
+          for(int i = 0; i < fields.length; i++) {
+              if (i < fieldNames.length) {
+                  builder.field(fieldNames[i], fields[i]);
+              }
+          }
+          builder.endObject();  
+          recordOutput = builder.toString();
+          id = fields[keyField];
         }
-        builder.endObject();
-        currentRequest.add(Requests.indexRequest(indexName).type(objType).id(fields[keyField]).create(true).source(builder));
+        
+        currentRequest.add(Requests.indexRequest(indexName).type(objType).id(id).create(true).source(recordOutput));
         processBulkIfNeeded();
-        if (randgen.nextDouble() < 0.01) { context.write(new Text(fields[keyField]), new Text("Indexed") ); }
+        if (randgen.nextDouble() < 0.01) { context.write(new Text(id), new Text("Indexed") ); }
     }
 
     private void processBulkIfNeeded() {
@@ -105,6 +138,14 @@ public class ElasticBulkLoader extends Configured implements Tool {
         this.fieldNames = conf.get("elasticsearch.field_names").split(",");
         this.keyField   = Integer.parseInt(conf.get("elasticsearch.key_field"));
         this.objType    = conf.get("elasticsearch.object_type");
+
+        // New var to handle JSON formatted sources
+        this.sourceType     = SourceType.valueOf(conf.get("source.type"));
+        this.jsonIdRegex    = conf.get("source.json_id_regex");
+        this.pattern = Pattern.compile(jsonIdRegex);
+        this.matcher = pattern.matcher("");
+        
+        
         System.setProperty("es.path.plugins",conf.get("elasticsearch.plugins_dir"));
         System.setProperty("es.config",conf.get("elasticsearch.config_yaml"));
 
