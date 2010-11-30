@@ -81,14 +81,30 @@ public class ElasticBulkLoader extends Configured implements Tool {
 
 
 
+    /* You can pull in files that are in JSON format.  This means that each 
+     * file is a \n delmited file where each line is a single JSON document
+     *
+     *    e.g. {  CID : "1235",  first_name : "Jim",  last_name : "Smith",  favorite_books : ["Lord of the rings", "A walk in the woods", "The Big Short: Inside the Doomsday Machine"],  date_of_birth : "1980-07-01"}
+     *
+     * Then you would need a REGEX to pull out the ID such as:
+     *
+     *    String CID_PATTERN = ".*\"CID\":\"([^\"]+)\".*"; // {"CID":"12345"
+     *
+     * TODO:  Maybe rethink this so that it's a CSV/TSV of the format:
+     *
+     *    <id>, <json_string> 
+     *
+     * so that the ID is easily parsable instead of pulling out with REGEX
+     * 
+     */
+
     public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
         
         String recordOutput;
         String id;
+        
         if (sourceType == SourceType.json){
-          // String CID_PATTERN = ".*\"CID\":\"([^\"]+)\".*"; // {"CID":"z:LEG:00000019801"
           id = matcher.replaceFirst( "$1" );
-          
           recordOutput = value.toString();
         } 
         else {
